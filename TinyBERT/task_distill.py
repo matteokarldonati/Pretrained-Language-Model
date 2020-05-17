@@ -20,10 +20,14 @@ from __future__ import absolute_import, division, print_function
 
 import argparse
 import csv
+import glob
+import json
 import logging
 import os
+from dataclasses import dataclass
 import random
 import sys
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -77,6 +81,25 @@ class InputExample(object):
         self.text_b = text_b
         self.label = label
 
+@dataclass(frozen=True)
+class RaceInputExample:
+    """
+    A single training/test example for multiple choice
+    Args:
+        example_id: Unique id for the example.
+        question: string. The untokenized text of the second sequence (question).
+        contexts: list of str. The untokenized text of the first sequence (context of corresponding question).
+        endings: list of str. multiple choice's options. Its length must be equal to contexts' length.
+        label: (Optional) string. The label of the example. This should be
+        specified for train and dev examples, but not for test examples.
+    """
+
+    example_id: str
+    question: str
+    contexts: List[str]
+    endings: List[str]
+    label: Optional[str]
+
 
 class InputFeatures(object):
     """A single set of features of data."""
@@ -115,6 +138,73 @@ class DataProcessor(object):
                     line = list(unicode(cell, 'utf-8') for cell in line)
                 lines.append(line)
             return lines
+
+
+class RaceProcessor(DataProcessor):
+    """Processor for the RACE data set."""
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        logger.info("LOOKING AT {} train".format(data_dir))
+        high = os.path.join(data_dir, "train/high")
+        middle = os.path.join(data_dir, "train/middle")
+        high = self._read_txt(high)
+        middle = self._read_txt(middle)
+        return self._create_examples(high + middle, "train")
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        logger.info("LOOKING AT {} dev".format(data_dir))
+        high = os.path.join(data_dir, "dev/high")
+        middle = os.path.join(data_dir, "dev/middle")
+        high = self._read_txt(high)
+        middle = self._read_txt(middle)
+        return self._create_examples(high + middle, "dev")
+
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        logger.info("LOOKING AT {} test".format(data_dir))
+        high = os.path.join(data_dir, "test/high")
+        middle = os.path.join(data_dir, "test/middle")
+        high = self._read_txt(high)
+        middle = self._read_txt(middle)
+        return self._create_examples(high + middle, "test")
+
+    def get_labels(self):
+        """See base class."""
+        return ["0", "1", "2", "3"]
+
+    def _read_txt(self, input_dir):
+        lines = []
+        files = glob.glob(input_dir + "/*txt")
+        for file in tqdm(files, desc="read files"):
+            with open(file, "r", encoding="utf-8") as fin:
+                data_raw = json.load(fin)
+                data_raw["race_id"] = file
+                lines.append(data_raw)
+        return lines
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        for (_, data_raw) in enumerate(lines):
+            race_id = "%s-%s" % (set_type, data_raw["race_id"])
+            article = data_raw["article"]
+            for i in range(len(data_raw["answers"])):
+                truth = str(ord(data_raw["answers"][i]) - ord("A"))
+                question = data_raw["questions"][i]
+                options = data_raw["options"][i]
+
+                examples.append(
+                    RaceInputExample(
+                        example_id=race_id,
+                        question=question,
+                        contexts=[article, article, article, article],
+                        endings=[options[0], options[1], options[2], options[3]],
+                        label=truth,
+                    )
+                )
+        return examples
 
 
 class MrpcProcessor(DataProcessor):
@@ -517,6 +607,71 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     return features
 
 
+def convert_examples_to_features_race(examples, label_list, max_seq_length,
+                                 tokenizer):
+    """Loads a data file into a list of `InputBatch`s."""
+
+    label_map = {label: i for i, label in enumerate(label_list)}
+
+    features = []
+    for (ex_index, example) in enumerate(examples):
+        if ex_index % 10000 == 0:
+            logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+        input_ids = []
+        input_mask = []
+        segment_ids = []
+        for ending_idx, (context, ending) in enumerate(zip(example.contexts, example.endings)):
+            text_a = context
+            if example.question.find("_") != -1:
+                text_b = example.question.replace("_", ending)
+            else:
+                text_b = example.question + " " + ending
+
+            tokens_a = tokenizer.tokenize(text_a)
+            tokens_b = tokenizer.tokenize(text_b)
+            _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+
+            tokens = ["[CLS]"] + tokens_a + ["[SEP]"] + tokens_b + ["[SEP]"]
+            segment = [0] * (len(tokens_a) + 2) + [1] * (len(tokens_b) + 1)
+
+            input = tokenizer.convert_tokens_to_ids(tokens)
+            mask = [1] * len(input)
+
+            padding = [0] * (max_seq_length - len(input))
+            input += padding
+            mask += padding
+            segment += padding
+
+            assert len(input) == max_seq_length
+            assert len(mask) == max_seq_length
+            assert len(segment) == max_seq_length
+
+            input_ids.append(input)
+            input_mask.append(mask)
+            segment_ids.append(segment)
+
+        label_id = label_map[example.label]
+
+        if ex_index < 1:
+            logger.info("*** Example ***")
+            logger.info("guid: %s" % (example.example_id))
+            logger.info("tokens: %s" % " ".join(
+                [str(x) for x in tokens]))
+            logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+            logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
+            logger.info(
+                "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+            logger.info("label: {}".format(example.label))
+            logger.info("label_id: {}".format(label_id))
+
+        features.append(
+            InputFeatures(input_ids=input_ids,
+                          input_mask=input_mask,
+                          segment_ids=segment_ids,
+                          label_id=label_id))
+    return features
+
+
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
     """Truncates a sequence pair in place to the maximum length."""
     while True:
@@ -555,7 +710,9 @@ def pearson_and_spearman(preds, labels):
 
 def compute_metrics(task_name, preds, labels):
     assert len(preds) == len(labels)
-    if task_name == "cola":
+    if task_name == "race":
+        return {"acc": simple_accuracy(preds, labels)}
+    elif task_name == "cola":
         return {"mcc": matthews_corrcoef(labels, preds)}
     elif task_name == "sst-2":
         return {"acc": simple_accuracy(preds, labels)}
@@ -743,6 +900,7 @@ def main():
     logger.info('The args: {}'.format(args))
 
     processors = {
+        "race": RaceProcessor,
         "cola": ColaProcessor,
         "mnli": MnliProcessor,
         "mnli-mm": MnliMismatchedProcessor,
@@ -756,6 +914,7 @@ def main():
     }
 
     output_modes = {
+        "race": "classification",
         "cola": "classification",
         "mnli": "classification",
         "mrpc": "classification",
@@ -769,6 +928,7 @@ def main():
 
     # intermediate distillation default parameters
     default_params = {
+        "race": {"num_train_epochs": 5, "max_seq_length": 128},
         "cola": {"num_train_epochs": 50, "max_seq_length": 64},
         "mnli": {"num_train_epochs": 5, "max_seq_length": 128},
         "mrpc": {"num_train_epochs": 20, "max_seq_length": 128},
@@ -779,7 +939,7 @@ def main():
         "rte": {"num_train_epochs": 20, "max_seq_length": 128}
     }
 
-    acc_tasks = ["mnli", "mrpc", "sst-2", "qqp", "qnli", "rte"]
+    acc_tasks = ["race", "mnli", "mrpc", "sst-2", "qqp", "qnli", "rte"]
     corr_tasks = ["sts-b"]
     mcc_tasks = ["cola"]
 
@@ -839,14 +999,24 @@ def main():
         num_train_optimization_steps = int(
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
 
-        train_features = convert_examples_to_features(train_examples, label_list,
+        if args.task_name == "race":
+            train_features = convert_examples_to_features_race(train_examples, label_list,
+                                                args.max_seq_length, tokenizer)
+        else:
+            train_features = convert_examples_to_features(train_examples, label_list,
                                                       args.max_seq_length, tokenizer, output_mode)
         train_data, _ = get_tensor_data(output_mode, train_features)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
     eval_examples = processor.get_dev_examples(args.data_dir)
-    eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+
+    if args.task_name == "race":
+        eval_features = convert_examples_to_features_race(eval_examples, label_list,
+                                                           args.max_seq_length, tokenizer)
+    else:
+        eval_features = convert_examples_to_features(eval_examples, label_list,
+                                                      args.max_seq_length, tokenizer, output_mode)
     eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
