@@ -66,7 +66,6 @@ class InputExample(object):
 
     def __init__(self, guid, text_a, text_b=None, label=None):
         """Constructs a InputExample.
-
         Args:
             guid: Unique id for the example.
             text_a: string. The untokenized text of the first sequence. For single
@@ -80,6 +79,7 @@ class InputExample(object):
         self.text_a = text_a
         self.text_b = text_b
         self.label = label
+
 
 @dataclass(frozen=True)
 class RaceInputExample:
@@ -608,7 +608,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
 
 def convert_examples_to_features_race(examples, label_list, max_seq_length,
-                                 tokenizer):
+                                      tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
 
     label_map = {label: i for i, label in enumerate(label_list)}
@@ -1001,10 +1001,10 @@ def main():
 
         if args.task_name == "race":
             train_features = convert_examples_to_features_race(train_examples, label_list,
-                                                args.max_seq_length, tokenizer)
+                                                               args.max_seq_length, tokenizer)
         else:
             train_features = convert_examples_to_features(train_examples, label_list,
-                                                      args.max_seq_length, tokenizer, output_mode)
+                                                          args.max_seq_length, tokenizer, output_mode)
         train_data, _ = get_tensor_data(output_mode, train_features)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
@@ -1013,10 +1013,10 @@ def main():
 
     if args.task_name == "race":
         eval_features = convert_examples_to_features_race(eval_examples, label_list,
-                                                           args.max_seq_length, tokenizer)
+                                                          args.max_seq_length, tokenizer)
     else:
         eval_features = convert_examples_to_features(eval_examples, label_list,
-                                                      args.max_seq_length, tokenizer, output_mode)
+                                                     args.max_seq_length, tokenizer, output_mode)
     eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)

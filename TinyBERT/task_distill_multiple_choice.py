@@ -36,10 +36,8 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 from tqdm import tqdm, trange
 
 from torch.nn import CrossEntropyLoss, MSELoss
-from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import matthews_corrcoef, f1_score
 
-from transformer.modeling import TinyBertForSequenceClassification
+from transformer.modeling import TinyBertForMultipleChoice
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
 from transformer.file_utils import WEIGHTS_NAME, CONFIG_NAME
@@ -186,8 +184,7 @@ class RaceProcessor(DataProcessor):
         return examples
 
 
-def convert_examples_to_features_race(examples, label_list, max_seq_length,
-                                 tokenizer):
+def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
 
     label_map = {label: i for i, label in enumerate(label_list)}
@@ -196,6 +193,8 @@ def convert_examples_to_features_race(examples, label_list, max_seq_length,
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+        if (ex_index + 1) % 1000 == 0:
+            break
         input_ids = []
         input_mask = []
         segment_ids = []
@@ -213,19 +212,19 @@ def convert_examples_to_features_race(examples, label_list, max_seq_length,
             tokens = ["[CLS]"] + tokens_a + ["[SEP]"] + tokens_b + ["[SEP]"]
             segment = [0] * (len(tokens_a) + 2) + [1] * (len(tokens_b) + 1)
 
-            input = tokenizer.convert_tokens_to_ids(tokens)
-            mask = [1] * len(input)
+            input_ = tokenizer.convert_tokens_to_ids(tokens)
+            mask = [1] * len(input_)
 
-            padding = [0] * (max_seq_length - len(input))
-            input += padding
+            padding = [0] * (max_seq_length - len(input_))
+            input_ += padding
             mask += padding
             segment += padding
 
-            assert len(input) == max_seq_length
+            assert len(input_) == max_seq_length
             assert len(mask) == max_seq_length
             assert len(segment) == max_seq_length
 
-            input_ids.append(input)
+            input_ids.append(input_)
             input_mask.append(mask)
             segment_ids.append(segment)
 
@@ -268,65 +267,21 @@ def simple_accuracy(preds, labels):
     return (preds == labels).mean()
 
 
-def acc_and_f1(preds, labels):
-    acc = simple_accuracy(preds, labels)
-    f1 = f1_score(y_true=labels, y_pred=preds)
-    return {
-        "acc": acc,
-        "f1": f1,
-        "acc_and_f1": (acc + f1) / 2,
-    }
-
-
-def pearson_and_spearman(preds, labels):
-    pearson_corr = pearsonr(preds, labels)[0]
-    spearman_corr = spearmanr(preds, labels)[0]
-    return {
-        "pearson": pearson_corr,
-        "spearmanr": spearman_corr,
-        "corr": (pearson_corr + spearman_corr) / 2,
-    }
-
-
 def compute_metrics(task_name, preds, labels):
     assert len(preds) == len(labels)
     if task_name == "race":
-        return {"acc": simple_accuracy(preds, labels)}
-    elif task_name == "cola":
-        return {"mcc": matthews_corrcoef(labels, preds)}
-    elif task_name == "sst-2":
-        return {"acc": simple_accuracy(preds, labels)}
-    elif task_name == "mrpc":
-        return acc_and_f1(preds, labels)
-    elif task_name == "sts-b":
-        return pearson_and_spearman(preds, labels)
-    elif task_name == "qqp":
-        return acc_and_f1(preds, labels)
-    elif task_name == "mnli":
-        return {"acc": simple_accuracy(preds, labels)}
-    elif task_name == "mnli-mm":
-        return {"acc": simple_accuracy(preds, labels)}
-    elif task_name == "qnli":
-        return {"acc": simple_accuracy(preds, labels)}
-    elif task_name == "rte":
-        return {"acc": simple_accuracy(preds, labels)}
-    elif task_name == "wnli":
         return {"acc": simple_accuracy(preds, labels)}
     else:
         raise KeyError(task_name)
 
 
-def get_tensor_data(output_mode, features):
-    if output_mode == "classification":
-        all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
-    elif output_mode == "regression":
-        all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
-
+def get_tensor_data(features):
+    all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
     tensor_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                all_label_ids,)
+                                all_label_ids, )
     return tensor_data, all_label_ids
 
 
@@ -352,12 +307,8 @@ def do_eval(model, task_name, eval_dataloader,
             logits, _, _ = model(input_ids, segment_ids, input_mask)
 
         # create eval loss and other metric required by the task
-        if output_mode == "classification":
-            loss_fct = CrossEntropyLoss()
-            tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
-        elif output_mode == "regression":
-            loss_fct = MSELoss()
-            tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
+        loss_fct = CrossEntropyLoss()
+        tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
 
         eval_loss += tmp_eval_loss.mean().item()
         nb_eval_steps += 1
@@ -488,10 +439,8 @@ def main():
 
     # intermediate distillation default parameters
     default_params = {
-        "race": {"num_train_epochs": 5, "max_seq_length": 128},
+        "race": {"num_train_epochs": 3, "max_seq_length": 80},
     }
-
-    acc_tasks = ["race"]
 
     # Prepare devices
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -549,27 +498,25 @@ def main():
         num_train_optimization_steps = int(
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
 
-        train_features = convert_examples_to_features_race(train_examples, label_list,
-                                            args.max_seq_length, tokenizer)
+        train_features = convert_examples_to_features(train_examples, label_list, args.max_seq_length, tokenizer)
 
-        train_data, _ = get_tensor_data(output_mode, train_features)
+        train_data, _ = get_tensor_data(train_features)
         train_sampler = RandomSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
     eval_examples = processor.get_dev_examples(args.data_dir)
 
-    eval_features = convert_examples_to_features_race(eval_examples, label_list,
-                                                           args.max_seq_length, tokenizer)
+    eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer)
 
-    eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
+    eval_data, eval_labels = get_tensor_data(eval_features)
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     if not args.do_eval:
-        teacher_model = TinyBertForSequenceClassification.from_pretrained(args.teacher_model, num_labels=num_labels)
+        teacher_model = TinyBertForMultipleChoice.from_pretrained(args.teacher_model)
         teacher_model.to(device)
 
-    student_model = TinyBertForSequenceClassification.from_pretrained(args.student_model, num_labels=num_labels)
+    student_model = TinyBertForMultipleChoice.from_pretrained(args.student_model)
     student_model.to(device)
     if args.do_eval:
         logger.info("***** Running evaluation *****")
@@ -644,11 +591,15 @@ def main():
                 rep_loss = 0.
                 cls_loss = 0.
 
-                student_logits, student_atts, student_reps = student_model(input_ids, segment_ids, input_mask,
+                student_logits, student_atts, student_reps = student_model(input_ids=input_ids,
+                                                                           token_type_ids=segment_ids,
+                                                                           attention_mask=input_mask,
                                                                            is_student=True)
 
                 with torch.no_grad():
-                    teacher_logits, teacher_atts, teacher_reps = teacher_model(input_ids, segment_ids, input_mask)
+                    teacher_logits, teacher_atts, teacher_reps = teacher_model(input_ids=input_ids,
+                                                                               token_type_ids=segment_ids,
+                                                                               attention_mask=input_mask)
 
                 if not args.pred_distill:
                     teacher_layer_num = len(teacher_atts)
