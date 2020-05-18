@@ -292,7 +292,7 @@ def result_to_file(result, file_name):
 
 
 def do_eval(model, task_name, eval_dataloader,
-            device, output_mode, eval_labels, num_labels):
+            device, eval_labels, num_labels):
     eval_loss = 0
     nb_eval_steps = 0
     preds = []
@@ -300,7 +300,7 @@ def do_eval(model, task_name, eval_dataloader,
     for batch_ in tqdm(eval_dataloader, desc="Evaluating"):
         batch_ = tuple(t.to(device) for t in batch_)
         with torch.no_grad():
-            input_ids, input_mask, segment_ids, label_ids, seq_lengths = batch_
+            input_ids, input_mask, segment_ids, label_ids = batch_
 
             logits, _, _ = model(input_ids, segment_ids, input_mask)
 
@@ -319,10 +319,8 @@ def do_eval(model, task_name, eval_dataloader,
     eval_loss = eval_loss / nb_eval_steps
 
     preds = preds[0]
-    if output_mode == "classification":
-        preds = np.argmax(preds, axis=1)
-    elif output_mode == "regression":
-        preds = np.squeeze(preds)
+    preds = np.argmax(preds, axis=1)
+
     result = compute_metrics(task_name, preds, eval_labels.numpy())
     result['eval_loss'] = eval_loss
 
@@ -431,10 +429,6 @@ def main():
         "race": RaceProcessor,
     }
 
-    output_modes = {
-        "race": "classification",
-    }
-
     # intermediate distillation default parameters
     default_params = {
         "race": {"num_train_epochs": 3, "max_seq_length": 80},
@@ -476,7 +470,6 @@ def main():
         raise ValueError("Task not found: %s" % task_name)
 
     processor = processors[task_name]()
-    output_mode = output_modes[task_name]
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
@@ -523,7 +516,7 @@ def main():
 
         student_model.eval()
         result = do_eval(student_model, task_name, eval_dataloader,
-                         device, output_mode, eval_labels, num_labels)
+                         device, eval_labels, num_labels)
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
@@ -663,7 +656,7 @@ def main():
                     result = {}
                     if args.pred_distill:
                         result = do_eval(student_model, task_name, eval_dataloader,
-                                         device, output_mode, eval_labels, num_labels)
+                                         device, eval_labels, num_labels)
                     result['global_step'] = global_step
                     result['cls_loss'] = cls_loss
                     result['att_loss'] = att_loss
