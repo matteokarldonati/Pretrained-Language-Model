@@ -626,12 +626,7 @@ def main():
                     tr_att_loss += att_loss.item()
                     tr_rep_loss += rep_loss.item()
                 else:
-                    if output_mode == "classification":
-                        cls_loss = soft_cross_entropy(student_logits / args.temperature,
-                                                      teacher_logits / args.temperature)
-                    elif output_mode == "regression":
-                        loss_mse = MSELoss()
-                        cls_loss = loss_mse(student_logits.view(-1), label_ids.view(-1))
+                    cls_loss = soft_cross_entropy(student_logits / args.temperature, teacher_logits / args.temperature)
 
                     loss = cls_loss
                     tr_cls_loss += cls_loss.item()
