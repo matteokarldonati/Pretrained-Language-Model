@@ -311,22 +311,16 @@ def do_eval(model, task_name, eval_dataloader,
         eval_loss += tmp_eval_loss.mean().item()
         nb_eval_steps += 1
         if len(preds) == 0:
-            preds.append(logits.detach().cpu().numpy())
+            preds.append(logits.view(-1, num_labels).detach().cpu().numpy())
         else:
             preds[0] = np.append(
-                preds[0], logits.detach().cpu().numpy(), axis=0)
+                preds[0], logits.view(-1, num_labels).detach().cpu().numpy(), axis=0)
 
     eval_loss = eval_loss / nb_eval_steps
 
     preds = preds[0]
 
-    print("logits", logits.shape)
-    print("preds", preds.shape())
-
     preds = np.argmax(preds, axis=1)
-
-    print("preds_argmax", len(preds),)
-    print("labels", len(eval_labels))
 
     result = compute_metrics(task_name, preds, eval_labels.numpy())
     result['eval_loss'] = eval_loss
