@@ -302,7 +302,7 @@ def do_eval(model, task_name, eval_dataloader,
         with torch.no_grad():
             input_ids, input_mask, segment_ids, label_ids = batch_
 
-            logits, _, _ = model(input_ids, segment_ids, input_mask)
+            logits, _, _ = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=input_mask)
 
         # create eval loss and other metric required by the task
         loss_fct = CrossEntropyLoss()
@@ -319,7 +319,14 @@ def do_eval(model, task_name, eval_dataloader,
     eval_loss = eval_loss / nb_eval_steps
 
     preds = preds[0]
+
+    print("logits", logits.shape)
+    print("preds", preds.shape())
+
     preds = np.argmax(preds, axis=1)
+
+    print("preds_argmax", len(preds),)
+    print("labels", len(eval_labels))
 
     result = compute_metrics(task_name, preds, eval_labels.numpy())
     result['eval_loss'] = eval_loss
@@ -489,7 +496,16 @@ def main():
         num_train_optimization_steps = int(
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
 
-        train_features = convert_examples_to_features(train_examples, label_list, args.max_seq_length, tokenizer)
+        cached_features_file_train = os.path.join(
+            args.data_dir,
+            "cached_train_{}_{}_{}".format(tokenizer.__class__.__name__, str(args.max_seq_length), task_name, ),
+        )
+
+        if os.path.exists(cached_features_file_train):
+            train_features = torch.load(cached_features_file_train)
+        else:
+            train_features = convert_examples_to_features(train_examples, label_list, args.max_seq_length, tokenizer)
+            torch.save(train_features, cached_features_file_train)
 
         train_data, _ = get_tensor_data(train_features)
         train_sampler = RandomSampler(train_data)
@@ -497,7 +513,16 @@ def main():
 
     eval_examples = processor.get_dev_examples(args.data_dir)
 
-    eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer)
+    cached_features_file_eval = os.path.join(
+        args.data_dir,
+        "cached_eval_{}_{}_{}".format(tokenizer.__class__.__name__, str(args.max_seq_length), task_name, ),
+    )
+
+    if os.path.exists(cached_features_file_eval):
+        eval_features = torch.load(cached_features_file_eval)
+    else:
+        eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer)
+        torch.save(eval_features, cached_features_file_eval)
 
     eval_data, eval_labels = get_tensor_data(eval_features)
     eval_sampler = SequentialSampler(eval_data)
