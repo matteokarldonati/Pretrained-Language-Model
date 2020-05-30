@@ -588,7 +588,7 @@ def main():
         if args.fp16:
             if not _has_apex:
                 raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-            student_model, optimizer = amp.initialize(student_model, optimizer, opt_level='01')
+            student_model, optimizer = amp.initialize(student_model, optimizer, opt_level='O1')
 
         if n_gpu > 1:
             student_model = torch.nn.DataParallel(student_model)
