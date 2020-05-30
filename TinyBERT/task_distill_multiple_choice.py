@@ -24,23 +24,23 @@ import glob
 import json
 import logging
 import os
-from dataclasses import dataclass
 import random
 import sys
+from dataclasses import dataclass
 from typing import List, Optional
+from tqdm import tqdm, trange
 
 import numpy as np
 import torch
+from torch.nn import CrossEntropyLoss, MSELoss
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
-from tqdm import tqdm, trange
+import wandb
 
-from torch.nn import CrossEntropyLoss, MSELoss
-
-from transformer.modeling import TinyBertForMultipleChoice
-from transformer.tokenization import BertTokenizer
-from transformer.optimization import BertAdam
 from transformer.file_utils import WEIGHTS_NAME, CONFIG_NAME
+from transformer.modeling import TinyBertForMultipleChoice
+from transformer.optimization import BertAdam
+from transformer.tokenization import BertTokenizer
 
 csv.field_size_limit(sys.maxsize)
 
@@ -51,6 +51,8 @@ fh = logging.FileHandler('debug_layer_loss.log')
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 logger = logging.getLogger()
+
+wandb.init(project="TinyBERT")
 
 oncloud = True
 try:
@@ -425,6 +427,7 @@ def main():
 
     args = parser.parse_args()
     logger.info('The args: {}'.format(args))
+    wandb.config.update(args)
 
     processors = {
         "race": RaceProcessor,
@@ -528,6 +531,7 @@ def main():
 
     student_model = TinyBertForMultipleChoice.from_pretrained(args.student_model)
     student_model.to(device)
+    wandb.watch(student_model, log='all')
     if args.do_eval:
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
@@ -539,6 +543,7 @@ def main():
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
+            wandb.log(result)
     else:
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
@@ -681,6 +686,8 @@ def main():
                     result['att_loss'] = att_loss
                     result['rep_loss'] = rep_loss
                     result['loss'] = loss
+
+                    wandb.log(result, step=global_step)
 
                     result_to_file(result, output_eval_file)
 
