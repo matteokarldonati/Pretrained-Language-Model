@@ -42,6 +42,13 @@ from transformer.modeling import TinyBertForMultipleChoice
 from transformer.optimization import BertAdam
 from transformer.tokenization import BertTokenizer
 
+try:
+    from apex import amp
+
+    _has_apex = True
+except ImportError:
+    _has_apex = False
+
 csv.field_size_limit(sys.maxsize)
 
 log_format = '%(asctime)s %(message)s'
@@ -409,6 +416,10 @@ def main():
                         type=int,
                         default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
+    parser.add_argument('--fp16',
+                        default=False,
+                        action='store_true',
+                        help="Whether to use 16-bit float precision instead of 32-bit")
 
     # added arguments
     parser.add_argument('--aug_train',
@@ -532,6 +543,7 @@ def main():
     student_model = TinyBertForMultipleChoice.from_pretrained(args.student_model)
     student_model.to(device)
     wandb.watch(student_model, log='all')
+
     if args.do_eval:
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
@@ -549,9 +561,7 @@ def main():
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
-        if n_gpu > 1:
-            student_model = torch.nn.DataParallel(student_model)
-            teacher_model = torch.nn.DataParallel(teacher_model)
+
         # Prepare optimizer
         param_optimizer = list(student_model.named_parameters())
         size = 0
@@ -568,11 +578,22 @@ def main():
         schedule = 'warmup_linear'
         if not args.pred_distill:
             schedule = 'none'
+
         optimizer = BertAdam(optimizer_grouped_parameters,
                              schedule=schedule,
                              lr=args.learning_rate,
                              warmup=args.warmup_proportion,
                              t_total=num_train_optimization_steps)
+
+        if args.fp16:
+            if not _has_apex:
+                raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+            student_model, optimizer = amp.initialize(student_model, optimizer, opt_level='01')
+
+        if n_gpu > 1:
+            student_model = torch.nn.DataParallel(student_model)
+            teacher_model = torch.nn.DataParallel(teacher_model)
+
         # Prepare loss functions
         loss_mse = MSELoss()
 
@@ -653,13 +674,20 @@ def main():
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
 
-                loss.backward()
+                if args.fp16:
+                    with amp.scale_loss(loss, optimizer) as scaled_loss:
+                        scaled_loss.backward()
+                else:
+                    loss.backward()
 
                 tr_loss += loss.item()
                 nb_tr_examples += label_ids.size(0)
                 nb_tr_steps += 1
 
                 if (step + 1) % args.gradient_accumulation_steps == 0:
+                    if args.fp16:
+                        torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), 1)
+
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
