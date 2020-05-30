@@ -1162,7 +1162,7 @@ class TinyBertForMultipleChoice(BertPreTrainedModel):
         labels=None,
         is_student=False
     ):
-
+        num_choices = input_ids.shape[1]
         input_ids = input_ids.view(-1, input_ids.size(-1))
         attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
         token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
@@ -1177,6 +1177,7 @@ class TinyBertForMultipleChoice(BertPreTrainedModel):
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
+        reshaped_logits = logits.view(-1, num_choices)
 
         tmp = []
         if is_student:
@@ -1184,4 +1185,4 @@ class TinyBertForMultipleChoice(BertPreTrainedModel):
                 tmp.append(self.fit_dense(sequence_layer))
             sequence_output = tmp
 
-        return logits, att_output, sequence_output
+        return reshaped_logits, att_output, sequence_output

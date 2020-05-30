@@ -320,10 +320,10 @@ def do_eval(model, task_name, eval_dataloader,
         eval_loss += tmp_eval_loss.mean().item()
         nb_eval_steps += 1
         if len(preds) == 0:
-            preds.append(logits.view(-1, num_labels).detach().cpu().numpy())
+            preds.append(logits.detach().cpu().numpy())
         else:
             preds[0] = np.append(
-                preds[0], logits.view(-1, num_labels).detach().cpu().numpy(), axis=0)
+                preds[0], logits.detach().cpu().numpy(), axis=0)
 
     eval_loss = eval_loss / nb_eval_steps
 
@@ -506,7 +506,8 @@ def main():
 
         cached_features_file_train = os.path.join(
             args.data_dir,
-            "cached_train_{}_{}_{}_tinybert".format(tokenizer.__class__.__name__, str(args.max_seq_length), task_name, ),
+            "cached_train_{}_{}_{}_tinybert".format(tokenizer.__class__.__name__, str(args.max_seq_length),
+                                                    task_name, ),
         )
 
         if os.path.exists(cached_features_file_train):
