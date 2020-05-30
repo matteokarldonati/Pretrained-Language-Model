@@ -495,7 +495,7 @@ def main():
 
         cached_features_file_train = os.path.join(
             args.data_dir,
-            "cached_train_BertTokenizer_{}_{}".format(str(args.max_seq_length), task_name, ),
+            "cached_train_{}_{}_{}".format(tokenizer.__class__.__name__, str(args.max_seq_length), task_name, ),
         )
 
         if os.path.exists(cached_features_file_train):
@@ -512,7 +512,7 @@ def main():
 
     cached_features_file_eval = os.path.join(
         args.data_dir,
-        "cached_dev_BertTokenizer_{}_{}".format(str(args.max_seq_length), task_name, ),
+        "cached_dev_{}_{}_{}".format(tokenizer.__class__.__name__, str(args.max_seq_length), task_name, ),
     )
 
     if os.path.exists(cached_features_file_eval):
